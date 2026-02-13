@@ -1,0 +1,89 @@
+---
+- name: Gather System Information for Migration Assessment
+  hosts: all
+  gather_facts: yes
+  become: yes
+  
+  tasks:
+    - name: Gather OS information
+      setup:
+        gather_subset:
+          - "!all"
+          - "!min"
+          - distribution
+          - distribution_version
+          - distribution_major_version
+          - os_family
+          - kernel
+          - hardware
+          - processor
+          - memory
+      register: system_facts
+    
+    - name: Gather package information (RedHat family)
+      shell: |
+        rpm -qa --qf '%{NAME}|%{VERSION}|%{RELEASE}|%{ARCH}\n' | sort
+      register: rpm_packages
+      when: ansible_os_family == "RedHat"
+      changed_when: false
+    
+    - name: Gather package information (Debian family)
+      shell: |
+        dpkg-query -W -f='${Package}|${Version}|${Architecture}\n' | sort
+      register: dpkg_packages
+      when: ansible_os_family == "Debian"
+      changed_when: false
+    
+    - name: Check installed services (systemd)
+      shell: systemctl list-unit-files --type=service --state=enabled --no-pager | awk '{print $1}' | grep -v "^UNIT"
+      register: enabled_services
+      changed_when: false
+      failed_when: false
+    
+    - name: Gather disk usage information
+      shell: df -h | tail -n +2
+      register: disk_usage
+      changed_when: false
+    
+    - name: Check kernel modules
+      shell: lsmod | tail -n +2 | awk '{print $1}' | sort
+      register: kernel_modules
+      changed_when: false
+    
+    - name: Check network configuration
+      shell: ip addr show | grep -E "^[0-9]|inet "
+      register: network_config
+      changed_when: false
+    
+    - name: Save gathered information to JSON
+      copy:
+        content: |
+          {
+            "hostname": "{{ ansible_hostname }}",
+            "fqdn": "{{ ansible_fqdn }}",
+            "os_family": "{{ ansible_os_family }}",
+            "distribution": "{{ ansible_distribution }}",
+            "distribution_version": "{{ ansible_distribution_version }}",
+            "distribution_major_version": "{{ ansible_distribution_major_version }}",
+            "kernel": "{{ ansible_kernel }}",
+            "architecture": "{{ ansible_architecture }}",
+            "processor_cores": "{{ ansible_processor_cores }}",
+            "processor_count": "{{ ansible_processor_count }}",
+            "memtotal_mb": "{{ ansible_memtotal_mb }}",
+            "packages": {{ (rpm_packages.stdout_lines | default(dpkg_packages.stdout_lines | default([]))) | to_json }},
+            "enabled_services": {{ enabled_services.stdout_lines | default([]) | to_json }},
+            "disk_usage": {{ disk_usage.stdout_lines | default([]) | to_json }},
+            "kernel_modules": {{ kernel_modules.stdout_lines | default([]) | to_json }},
+            "network_config": {{ network_config.stdout_lines | default([]) | to_json }}
+          }
+        dest: "/tmp/{{ ansible_hostname }}_system_info.json"
+      delegate_to: localhost
+      become: no
+    
+    - name: Fetch system information file
+      fetch:
+        src: "/tmp/{{ ansible_hostname }}_system_info.json"
+        dest: "{{ playbook_dir }}/../output/{{ ansible_hostname }}_system_info.json"
+        flat: yes
+      delegate_to: localhost
+      become: no

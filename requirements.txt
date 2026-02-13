@@ -1,0 +1,7 @@
+# Python requirements for migration assessment scripts
+# No external dependencies required - uses only Python standard library
+# Python 3.6+ recommended
+
+# Optional: for enhanced features
+# pyyaml>=5.1
+# jinja2>=2.10
