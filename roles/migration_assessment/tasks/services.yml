@@ -1,0 +1,28 @@
+---
+- name: "[Network] Identificar puertos en escucha"
+  shell: "ss -tulpn | grep LISTEN | awk '{print $5}' | awk -F: '{print $NF}' | sort -u"
+  register: listening_ports
+  changed_when: false
+
+- name: "[Services] Recolectar estado de servicios"
+  service_facts:
+
+- name: "[Services] Identificar servicios fallidos"
+  set_fact:
+    failed_services_list: "{{ ansible_facts.services | dict2items | selectattr('value.state', 'equalto', 'running') | selectattr('value.status', 'defined') | selectattr('value.status', 'equalto', 'failed') | map(attribute='key') | list }}"
+
+- name: "[Analysis] Penalizar por servicios fallidos"
+  set_fact:
+    current_risk_score: "{{ current_risk_score | int + 40 }}"
+    risk_factors: "{{ risk_factors + ['Servicios en estado FAILED detectados'] }}"
+  when: failed_services_list | length > 0
+
+- name: "[Analysis] Detectar Stack Complejo (DB/Web)"
+  set_fact:
+    current_risk_score: "{{ current_risk_score | int + 15 }}"
+    risk_factors: "{{ risk_factors + ['Stack complejo (DB/Web) detectado'] }}"
+  when: >
+    ('httpd.service' in ansible_facts.services) or 
+    ('nginx.service' in ansible_facts.services) or 
+    ('postgresql.service' in ansible_facts.services) or 
+    ('mysql.service' in ansible_facts.services)

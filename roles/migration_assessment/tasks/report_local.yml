@@ -1,0 +1,19 @@
+---
+- name: "[Final] Calcular Nivel de Riesgo"
+  set_fact:
+    risk_level: "{{ 'CRÍTICO' if current_risk_score|int >= 100 else 'ALTO' if current_risk_score|int >= 50 else 'MODERADO' if current_risk_score|int >= 20 else 'BAJO' }}"
+
+- name: "[Final] Generar JSON en el nodo"
+  copy:
+    content: "{{ { 
+      'host': ansible_hostname,
+      'os_family': ansible_os_family,
+      'os_distro': ansible_distribution,
+      'os_version': ansible_distribution_version,
+      'score': current_risk_score,
+      'level': risk_level,
+      'open_ports': listening_ports.stdout_lines | default([]),
+      'failed_services': failed_services_list | default([]),
+      'risk_factors': risk_factors
+    } | to_nice_json }}"
+    dest: "{{ assessment_report_dir }}/{{ assessment_report_file }}"

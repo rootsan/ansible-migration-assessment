@@ -1,0 +1,54 @@
+---
+- name: "Generar Reporte CSV Maestro de Migración"
+  hosts: all
+  gather_facts: no
+  vars:
+    local_report_dir: "./reports_json"
+    master_csv_file: "./Master_Migration_Risk_Report.csv"
+    remote_json_path: "/tmp/migration_assessment_{{ inventory_hostname }}.json"
+
+  tasks:
+    - name: "Recuperar JSONs al nodo de control"
+      fetch:
+        src: "{{ remote_json_path }}"
+        dest: "{{ local_report_dir }}/"
+        flat: yes
+
+- name: "Procesar JSONs y crear CSV"
+  hosts: localhost
+  gather_facts: no
+  vars:
+    local_report_dir: "./reports_json"
+    master_csv_file: "./Master_Migration_Risk_Report.csv"
+  
+  tasks:
+    - name: "Crear cabecera del CSV"
+      copy:
+        dest: "{{ master_csv_file }}"
+        content: "Hostname,OS,Version,Risk_Score,Risk_Level,Risk_Factors,Open_Ports\n"
+
+    - name: "Listar archivos JSON descargados"
+      find:
+        paths: "{{ local_report_dir }}"
+        patterns: "*.json"
+      register: json_files
+
+    - name: "Parsear JSONs y agregar al CSV"
+      vars:
+        json_content: "{{ lookup('file', item.path) | from_json }}"
+      lineinfile:
+        path: "{{ master_csv_file }}"
+        line: >-
+          {{ json_content.host }},
+          {{ json_content.os_distro }},
+          {{ json_content.os_version }},
+          {{ json_content.score }},
+          {{ json_content.level }},
+          "{{ json_content.risk_factors | join(' | ') }}",
+          "{{ json_content.open_ports | join(' ') }}"
+        insertafter: EOF
+      loop: "{{ json_files.files }}"
+
+    - name: "Notificación Final"
+      debug:
+        msg: "Reporte generado en: {{ playbook_dir }}/{{ master_csv_file }}"

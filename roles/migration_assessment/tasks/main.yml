@@ -1,0 +1,18 @@
+---
+- name: "Fase 0: Inicialización"
+  include_tasks: init.yml
+
+- name: "Fase 1: Auditoría de Recursos Físicos"
+  include_tasks: resources.yml
+
+- name: "Fase 2: Inteligencia de Logs"
+  include_tasks: logs.yml
+
+- name: "Fase 3: Descubrimiento de Servicios y Red"
+  include_tasks: services.yml
+
+- name: "Fase 4: Evaluación Específica de OS (Compatibility)"
+  include_tasks: os_checks.yml
+
+- name: "Fase 5: Generación de Reporte Local"
+  include_tasks: report_local.yml

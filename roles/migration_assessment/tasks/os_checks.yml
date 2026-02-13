@@ -1,0 +1,39 @@
+---
+# --- RED HAT / CENTOS ---
+- name: "[RHEL] Bloque de Análisis Red Hat"
+  block:
+    - name: "[RHEL] Chequeo de Kernel no estándar"
+      set_fact:
+        current_risk_score: "{{ current_risk_score | int + 50 }}"
+        risk_factors: "{{ risk_factors + ['Kernel custom detectado'] }}"
+      when: 
+        - ansible_distribution_major_version == '7'
+        - "'el7' not in ansible_kernel"
+
+    - name: "[RHEL] Simulación de Leapp (si aplica)"
+      command: leapp preupgrade --non-interactive
+      register: leapp_check
+      ignore_errors: yes
+      when: ansible_distribution_major_version | int >= 7
+
+    - name: "[RHEL] Penalizar fallos de Leapp"
+      set_fact:
+        current_risk_score: "{{ current_risk_score | int + 100 }}"
+        risk_factors: "{{ risk_factors + ['Inhibidores Leapp detectados'] }}"
+      when: leapp_check.rc is defined and leapp_check.rc != 0
+  when: ansible_os_family == "RedHat"
+
+# --- DEBIAN / UBUNTU ---
+- name: "[Debian] Bloque de Análisis Debian"
+  block:
+    - name: "[Debian] Buscar paquetes 'held'"
+      shell: "dpkg --get-selections | grep hold | wc -l"
+      register: held_pkg
+      changed_when: false
+
+    - name: "[Debian] Penalizar paquetes retenidos"
+      set_fact:
+        current_risk_score: "{{ current_risk_score | int + 30 }}"
+        risk_factors: "{{ risk_factors + ['Paquetes retenidos (apt hold)'] }}"
+      when: held_pkg.stdout | int > 0
+  when: ansible_os_family == "Debian"

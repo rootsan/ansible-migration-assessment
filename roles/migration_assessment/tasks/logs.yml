@@ -1,0 +1,17 @@
+---
+- name: "[Logs] Determinar ruta del log del sistema"
+  set_fact:
+    system_log_path: "{{ '/var/log/messages' if ansible_os_family in ['RedHat', 'Suse'] else '/var/log/syslog' }}"
+
+- name: "[Logs] Analizar últimas {{ log_lines_to_check }} líneas buscando patrones críticos"
+  shell: "tail -n {{ log_lines_to_check }} {{ system_log_path }} | grep -Ei '{{ log_error_patterns }}' | wc -l"
+  register: log_errors_count
+  changed_when: false
+  ignore_errors: yes
+  become: yes
+
+- name: "[Logs] Penalizar Score por inestabilidad detectada"
+  set_fact:
+    current_risk_score: "{{ current_risk_score | int + 40 }}"
+    risk_factors: "{{ risk_factors + ['Errores críticos recientes en logs (' ~ log_errors_count.stdout ~ ')'] }}"
+  when: log_errors_count.stdout | int > 10

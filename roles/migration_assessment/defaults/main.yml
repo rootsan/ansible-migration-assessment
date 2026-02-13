@@ -1,0 +1,15 @@
+# roles/migration_assessment/defaults/main.yml
+---
+# Configuración de Umbrales
+min_ram_mb: 2048
+min_boot_space_mb: 500
+min_root_space_gb: 5
+cpu_load_threshold_ratio: 0.8 # 80% per core
+
+# Configuración de Logs
+log_lines_to_check: 2000
+log_error_patterns: 'error|fail|critical|panic|segfault'
+
+# Rutas
+assessment_report_dir: "/tmp"
+assessment_report_file: "migration_assessment_{{ inventory_hostname }}.json"

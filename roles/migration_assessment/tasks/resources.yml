@@ -1,0 +1,24 @@
+---
+- name: "[Resources] Validar Memoria RAM disponible"
+  set_fact:
+    current_risk_score: "{{ current_risk_score | int + 40 }}"
+    risk_factors: "{{ risk_factors + ['RAM insuficiente (< ' ~ min_ram_mb ~ 'MB)'] }}"
+  when: ansible_memtotal_mb | int < min_ram_mb
+
+- name: "[Resources] Validar Carga de CPU"
+  set_fact:
+    current_risk_score: "{{ current_risk_score | int + 20 }}"
+    risk_factors: "{{ risk_factors + ['Carga CPU elevada'] }}"
+  when: (ansible_loadavg['1m'] | float) > (ansible_processor_vcpus | int * cpu_load_threshold_ratio)
+
+- name: "[Resources] Validar espacio en partición Raíz (/)"
+  set_fact:
+    current_risk_score: "{{ current_risk_score | int + 30 }}"
+    risk_factors: "{{ risk_factors + ['Espacio en / insuficiente (< ' ~ min_root_space_gb ~ 'GB)'] }}"
+  when: ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first | default(0) / 1024 / 1024 / 1024 < min_root_space_gb
+
+- name: "[Resources] Validar espacio en /boot"
+  set_fact:
+    current_risk_score: "{{ current_risk_score | int + 10 }}"
+    risk_factors: "{{ risk_factors + ['Espacio en /boot crítico'] }}"
+  when: ansible_mounts | selectattr('mount', 'equalto', '/boot') | map(attribute='size_available') | first | default(0) / 1024 / 1024 < min_boot_space_mb

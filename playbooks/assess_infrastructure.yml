@@ -1,0 +1,8 @@
+---
+- name: "Evaluación de Riesgo de Migración (Infraestructura y Apps)"
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  roles:
+    - role: migration_assessment
