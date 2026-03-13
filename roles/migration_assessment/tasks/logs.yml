@@ -14,4 +14,5 @@
   set_fact:
     current_risk_score: "{{ current_risk_score | int + 40 }}"
     risk_factors: "{{ risk_factors + ['Errores críticos recientes en logs (' ~ log_errors_count.stdout ~ ')'] }}"
+    risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Errores criticos en logs', 'points': 40, 'evidence': 'Coincidencias en ' ~ system_log_path ~ ': ' ~ (log_errors_count.stdout | default('0') | string)} ] }}"
   when: log_errors_count.stdout | int > 10

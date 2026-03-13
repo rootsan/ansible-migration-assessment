@@ -3,4 +3,15 @@
   set_fact:
     current_risk_score: 0
     risk_factors: []
+    risk_score_breakdown: []
     risk_level: "DESCONOCIDO"
+    stack_complex_detected: false
+    leapp_inhibitors_detected: false
+    running_services: []
+    service_technical_details: []
+    service_data_total_mb: 0
+    service_versions_summary: {}
+    software_versions:
+      kernel: "{{ ansible_kernel | default('N/D') }}"
+      python: "{{ ansible_python_version | default('N/D') }}"
+      package_manager: "{{ ansible_pkg_mgr | default('N/D') }}"

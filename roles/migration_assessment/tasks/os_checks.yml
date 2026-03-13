@@ -6,6 +6,7 @@
       set_fact:
         current_risk_score: "{{ current_risk_score | int + 50 }}"
         risk_factors: "{{ risk_factors + ['Kernel custom detectado'] }}"
+        risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Kernel no estandar', 'points': 50, 'evidence': 'Kernel detectado: ' ~ (ansible_kernel | string)} ] }}"
       when: 
         - ansible_distribution_major_version == '7'
         - "'el7' not in ansible_kernel"
@@ -19,7 +20,9 @@
     - name: "[RHEL] Penalizar fallos de Leapp"
       set_fact:
         current_risk_score: "{{ current_risk_score | int + 100 }}"
+        leapp_inhibitors_detected: true
         risk_factors: "{{ risk_factors + ['Inhibidores Leapp detectados'] }}"
+        risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Inhibidores Leapp', 'points': 100, 'evidence': 'Leapp rc=' ~ (leapp_check.rc | string)} ] }}"
       when: leapp_check.rc is defined and leapp_check.rc != 0
   when: ansible_os_family == "RedHat"
 
@@ -35,5 +38,6 @@
       set_fact:
         current_risk_score: "{{ current_risk_score | int + 30 }}"
         risk_factors: "{{ risk_factors + ['Paquetes retenidos (apt hold)'] }}"
+        risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Paquetes retenidos apt', 'points': 30, 'evidence': 'Paquetes hold detectados: ' ~ (held_pkg.stdout | default('0') | string)} ] }}"
       when: held_pkg.stdout | int > 0
   when: ansible_os_family == "Debian"

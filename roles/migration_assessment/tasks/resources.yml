@@ -3,22 +3,26 @@
   set_fact:
     current_risk_score: "{{ current_risk_score | int + 40 }}"
     risk_factors: "{{ risk_factors + ['RAM insuficiente (< ' ~ min_ram_mb ~ 'MB)'] }}"
+    risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'RAM insuficiente', 'points': 40, 'evidence': 'RAM detectada: ' ~ (ansible_memtotal_mb | string) ~ 'MB (minimo: ' ~ (min_ram_mb | string) ~ 'MB)'} ] }}"
   when: ansible_memtotal_mb | int < min_ram_mb
 
 - name: "[Resources] Validar Carga de CPU"
   set_fact:
     current_risk_score: "{{ current_risk_score | int + 20 }}"
     risk_factors: "{{ risk_factors + ['Carga CPU elevada'] }}"
+    risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Carga CPU elevada', 'points': 20, 'evidence': 'Load(1m): ' ~ (ansible_loadavg['1m'] | string) ~ ', vCPU: ' ~ (ansible_processor_vcpus | string) ~ ', umbral por core: ' ~ (cpu_load_threshold_ratio | string)} ] }}"
   when: (ansible_loadavg['1m'] | float) > (ansible_processor_vcpus | int * cpu_load_threshold_ratio)
 
 - name: "[Resources] Validar espacio en partición Raíz (/)"
   set_fact:
     current_risk_score: "{{ current_risk_score | int + 30 }}"
     risk_factors: "{{ risk_factors + ['Espacio en / insuficiente (< ' ~ min_root_space_gb ~ 'GB)'] }}"
+    risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Espacio insuficiente en /', 'points': 30, 'evidence': 'Disponible en /: ' ~ ((ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first | default(0) / 1024 / 1024 / 1024) | round(2) | string) ~ 'GB (minimo: ' ~ (min_root_space_gb | string) ~ 'GB)'} ] }}"
   when: ansible_mounts | selectattr('mount', 'equalto', '/') | map(attribute='size_available') | first | default(0) / 1024 / 1024 / 1024 < min_root_space_gb
 
 - name: "[Resources] Validar espacio en /boot"
   set_fact:
     current_risk_score: "{{ current_risk_score | int + 10 }}"
     risk_factors: "{{ risk_factors + ['Espacio en /boot crítico'] }}"
+    risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Espacio critico en /boot', 'points': 10, 'evidence': 'Disponible en /boot: ' ~ ((ansible_mounts | selectattr('mount', 'equalto', '/boot') | map(attribute='size_available') | first | default(0) / 1024 / 1024) | round(2) | string) ~ 'MB (minimo: ' ~ (min_boot_space_mb | string) ~ 'MB)'} ] }}"
   when: ansible_mounts | selectattr('mount', 'equalto', '/boot') | map(attribute='size_available') | first | default(0) / 1024 / 1024 < min_boot_space_mb

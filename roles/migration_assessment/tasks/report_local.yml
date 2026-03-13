@@ -3,6 +3,101 @@
   set_fact:
     risk_level: "{{ 'CRÍTICO' if current_risk_score|int >= 100 else 'ALTO' if current_risk_score|int >= 50 else 'MODERADO' if current_risk_score|int >= 20 else 'BAJO' }}"
 
+- name: "[Final] Construir resumen de calculo de Risk Score"
+  set_fact:
+    risk_score_summary:
+      method: "Risk_Score = suma de penalizaciones por hallazgos tecnicos detectados en recursos, logs, servicios y compatibilidad de SO"
+      total_points: "{{ current_risk_score | int }}"
+      factors_count: "{{ risk_score_breakdown | length }}"
+      breakdown: "{{ risk_score_breakdown }}"
+
+- name: "[Final] Determinar elegibilidad base para convert2RHEL"
+  set_fact:
+    convert2rhel_eligible: "{{ ansible_os_family == 'RedHat' and (ansible_distribution_major_version | int) == 7 }}"
+
+- name: "[Final] Recomendacion por defecto"
+  set_fact:
+    migration_recommendation:
+      strategy: "relocalizar_servicios"
+      decision: "No recomendado convert2RHEL"
+      rationale: "Aplicable cuando el sistema no es elegible para convert2RHEL o el riesgo operativo es alto"
+
+- name: "[Final] Recomendar convert2RHEL con hardening previo"
+  set_fact:
+    migration_recommendation:
+      strategy: "convert2rhel"
+      decision: "Recomendado"
+      rationale: "Host elegible (RedHat/CentOS 7) y riesgo no critico, sin inhibidores de Leapp"
+  when:
+    - convert2rhel_eligible | bool
+    - not leapp_inhibitors_detected | bool
+    - current_risk_score | int < 100
+
+- name: "[Final] Recomendar relocalizacion por alto riesgo operativo"
+  set_fact:
+    migration_recommendation:
+      strategy: "relocalizar_servicios"
+      decision: "Recomendado"
+      rationale: "Riesgo critico/alto, inhibidores Leapp o volumen de datos activo considerable; se sugiere replatform con ventana controlada"
+  when: >
+    (not convert2rhel_eligible | bool) or
+    (leapp_inhibitors_detected | bool) or
+    (current_risk_score | int >= 100) or
+    (stack_complex_detected | bool and service_data_total_mb | int > 10240)
+
+- name: "[Final] Definir mapa de puertos por servicio"
+  set_fact:
+    service_ports_map:
+      postgresql.service: ["5432 TCP"]
+      mysqld.service: ["3306 TCP"]
+      mysql.service: ["3306 TCP"]
+      mariadb.service: ["3306 TCP"]
+      nginx.service: ["80 TCP", "443 TCP"]
+      httpd.service: ["80 TCP", "443 TCP"]
+      apache2.service: ["80 TCP", "443 TCP"]
+      redis.service: ["6379 TCP"]
+      sshd.service: ["22 TCP"]
+
+- name: "[Final] Construir resumen de software habilitado y puertos"
+  set_fact:
+    enabled_software_version_summary: "{{ enabled_software_version_summary | default([]) + [ version_line ] }}"
+    enabled_software_ports_summary: "{{ enabled_software_ports_summary | default([]) + [ ports_line ] }}"
+    enabled_software_port_summary: "{{ enabled_software_port_summary | default([]) + [ summary_line ] }}"
+  vars:
+    service_label_map:
+      postgresql.service: "BD: PostgreSQL"
+      mysqld.service: "BD: MySQL"
+      mysql.service: "BD: MySQL"
+      mariadb.service: "BD: MariaDB"
+      nginx.service: "WEB Server: NGINX"
+      httpd.service: "WEB Server: HTTPD"
+      apache2.service: "WEB Server: Apache"
+      redis.service: "Cache: Redis"
+      sshd.service: "OpenSSH"
+    process_aliases_map:
+      postgresql.service: ["postgres", "postmaster"]
+      mysqld.service: ["mysqld", "mariadbd", "mysql"]
+      mysql.service: ["mysqld", "mariadbd", "mysql"]
+      mariadb.service: ["mariadbd", "mysqld", "mysql"]
+      nginx.service: ["nginx"]
+      httpd.service: ["httpd"]
+      apache2.service: ["apache2", "httpd"]
+      redis.service: ["redis-server", "redis"]
+      sshd.service: ["sshd"]
+    service_name: "{{ item.service | regex_replace('@.*\\.service$', '.service') }}"
+    service_label: "{{ service_label_map[service_name] | default(service_name) }}"
+    raw_version: "{{ item.version | default('N/D') | trim }}"
+    normalized_version: "{{ (raw_version | regex_search('[0-9]+(?:\\.[0-9A-Za-z]+)+')) | default(raw_version, true) }}"
+    alias_regex: "{{ (process_aliases_map[service_name] | default([])) | join('|') }}"
+    runtime_ports: "{{ listening_ports_by_process.stdout_lines | default([]) | select('match', '^(' ~ alias_regex ~ ')\\|') | map('regex_replace', '^[^|]+\\|', '') | map('regex_replace', '\\|', ' ') | list }}"
+    fallback_ports: "{{ service_ports_map[service_name] | default([]) }}"
+    ports_list: "{{ runtime_ports if (runtime_ports | length > 0) else fallback_ports }}"
+    ports_display: "{{ ports_list | join(', ') if (ports_list | length > 0) else 'N/D' }}"
+    version_line: "{{ service_label ~ ' ' ~ normalized_version }}"
+    ports_line: "{{ service_label ~ ' (sockets ' ~ ports_display ~ ')' }}"
+    summary_line: "{{ service_label ~ ' ' ~ normalized_version ~ ' (sockets ' ~ ports_display ~ ')' }}"
+  loop: "{{ service_technical_details | default([]) }}"
+
 - name: "[Final] Generar JSON en el nodo"
   copy:
     content: "{{ { 
@@ -10,10 +105,26 @@
       'os_family': ansible_os_family,
       'os_distro': ansible_distribution,
       'os_version': ansible_distribution_version,
-      'score': current_risk_score,
+      'score': current_risk_score | int,
       'level': risk_level,
+      'convert2rhel_eligible': convert2rhel_eligible | bool,
+      'migration_recommendation': migration_recommendation,
       'open_ports': listening_ports.stdout_lines | default([]),
+      'running_services_count': running_services | length,
+      'running_services': running_services,
+      'software_versions': software_versions | combine({'services': service_versions_summary}),
+      'kernel_version': software_versions.kernel,
+      'python_version': software_versions.python,
+      'package_manager': software_versions.package_manager,
+      'service_technical_details': service_technical_details,
+      'service_data_total_mb': service_data_total_mb | int,
+      'open_ports_with_protocol': listening_ports_by_process.stdout_lines | default([]) | map('regex_replace', '^.*\\|', '') | list | unique,
+      'enabled_software_version_summary': enabled_software_version_summary | default([]),
+      'enabled_software_ports_summary': enabled_software_ports_summary | default([]),
+      'enabled_software_port_summary': enabled_software_port_summary | default([]),
       'failed_services': failed_services_list | default([]),
-      'risk_factors': risk_factors
+      'risk_factors': risk_factors,
+      'risk_score_summary': risk_score_summary,
+      'risk_score_breakdown': risk_score_breakdown
     } | to_nice_json }}"
     dest: "{{ assessment_report_dir }}/{{ assessment_report_file }}"

@@ -1,5 +1,6 @@
 # roles/migration_assessment/defaults/main.yml
 ---
+ansible_python_interpreter: auto_silent
 # Configuración de Umbrales
 min_ram_mb: 2048
 min_boot_space_mb: 500

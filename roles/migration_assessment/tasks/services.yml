@@ -1,28 +1,175 @@
 ---
 - name: "[Network] Identificar puertos en escucha"
-  shell: "ss -tulpn | grep LISTEN | awk '{print $5}' | awk -F: '{print $NF}' | sort -u"
+  shell: |
+    ss -H -tulpn | awk '{
+      addr=$5
+      port=addr
+      sub(/^.*:/, "", port)
+      if (port ~ /^[0-9]+$/) print port
+    }' | sort -un
   register: listening_ports
+  changed_when: false
+
+- name: "[Network] Mapear puertos/protocolos por proceso con ss -tulpn"
+  shell: |
+    ss -H -tulpn | awk '
+    {
+      proto=toupper($1)
+      bind_addr=$5
+      port=bind_addr
+      sub(/^.*:/, "", port)
+      if (port ~ /^[0-9]+$/) {
+        proc="unknown"
+        pid="N/D"
+        if (match($0, /users:\(\("[^"]+"/)) {
+          proc=substr($0, RSTART+9, RLENGTH-10)
+        }
+        if (match($0, /pid=[0-9]+/)) {
+          pid=substr($0, RSTART+4, RLENGTH-4)
+        }
+        print proc "|" bind_addr " " proto "|pid=" pid
+      }
+    }' | sort -u
+  register: listening_ports_by_process
   changed_when: false
 
 - name: "[Services] Recolectar estado de servicios"
   service_facts:
 
+- name: "[Services] Inventariar servicios activos"
+  set_fact:
+    running_services: "{{ ansible_facts.services | dict2items | selectattr('value.state', 'defined') | selectattr('value.state', 'equalto', 'running') | map(attribute='key') | list | sort }}"
+
 - name: "[Services] Identificar servicios fallidos"
   set_fact:
-    failed_services_list: "{{ ansible_facts.services | dict2items | selectattr('value.state', 'equalto', 'running') | selectattr('value.status', 'defined') | selectattr('value.status', 'equalto', 'failed') | map(attribute='key') | list }}"
+    failed_services_list: >-
+      {{
+        (
+          (ansible_facts.services | dict2items | selectattr('value.state', 'defined') | selectattr('value.state', 'equalto', 'failed') | map(attribute='key') | list)
+          +
+          (ansible_facts.services | dict2items | selectattr('value.status', 'defined') | selectattr('value.status', 'equalto', 'failed') | map(attribute='key') | list)
+        ) | unique | list
+      }}
 
 - name: "[Analysis] Penalizar por servicios fallidos"
   set_fact:
     current_risk_score: "{{ current_risk_score | int + 40 }}"
     risk_factors: "{{ risk_factors + ['Servicios en estado FAILED detectados'] }}"
+    risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Servicios FAILED', 'points': 40, 'evidence': 'Servicios fallidos: ' ~ (failed_services_list | join(', '))} ] }}"
   when: failed_services_list | length > 0
 
 - name: "[Analysis] Detectar Stack Complejo (DB/Web)"
   set_fact:
     current_risk_score: "{{ current_risk_score | int + 15 }}"
+    stack_complex_detected: true
     risk_factors: "{{ risk_factors + ['Stack complejo (DB/Web) detectado'] }}"
+    risk_score_breakdown: "{{ risk_score_breakdown + [ {'factor': 'Stack complejo DB/Web', 'points': 15, 'evidence': 'Servicios detectados: ' ~ (running_services | select('match', '^(httpd|apache2|nginx|postgresql|mysqld|mysql|mariadb)') | list | join(', '))} ] }}"
   when: >
     ('httpd.service' in ansible_facts.services) or 
+    ('apache2.service' in ansible_facts.services) or
     ('nginx.service' in ansible_facts.services) or 
     ('postgresql.service' in ansible_facts.services) or 
-    ('mysql.service' in ansible_facts.services)
+    ('mysql.service' in ansible_facts.services) or
+    ('mysqld.service' in ansible_facts.services) or
+    ('mariadb.service' in ansible_facts.services)
+
+- name: "[Services] Definir perfiles tecnicos de servicios"
+  set_fact:
+    service_profiles:
+      nginx.service:
+        config_paths: ["/etc/nginx"]
+        data_paths: ["/var/www", "/var/cache/nginx", "/var/lib/nginx"]
+        version_cmd: "nginx -v"
+      httpd.service:
+        config_paths: ["/etc/httpd"]
+        data_paths: ["/var/www", "/var/lib/httpd"]
+        version_cmd: "httpd -v"
+      apache2.service:
+        config_paths: ["/etc/apache2"]
+        data_paths: ["/var/www", "/var/lib/apache2"]
+        version_cmd: "apache2 -v"
+      postgresql.service:
+        config_paths: ["/etc/postgresql", "/var/lib/pgsql/data"]
+        data_paths: ["/var/lib/pgsql", "/var/lib/postgresql"]
+        version_cmd: "psql --version"
+      mysqld.service:
+        config_paths: ["/etc/my.cnf", "/etc/my.cnf.d"]
+        data_paths: ["/var/lib/mysql"]
+        version_cmd: "mysqld --version || mysql --version"
+      mysql.service:
+        config_paths: ["/etc/mysql"]
+        data_paths: ["/var/lib/mysql"]
+        version_cmd: "mysql --version"
+      mariadb.service:
+        config_paths: ["/etc/my.cnf", "/etc/my.cnf.d", "/etc/mysql"]
+        data_paths: ["/var/lib/mysql"]
+        version_cmd: "mariadb --version || mysql --version"
+      redis.service:
+        config_paths: ["/etc/redis", "/etc/redis.conf"]
+        data_paths: ["/var/lib/redis"]
+        version_cmd: "redis-server --version"
+      sshd.service:
+        config_paths: ["/etc/ssh"]
+        data_paths: ["/var/lib/sshd"]
+        version_cmd: "sshd -V"
+
+- name: "[Services] Detectar servicios activos perfilados"
+  set_fact:
+    active_profiled_services: "{{ running_services | select('match', '^(nginx|httpd|apache2|postgresql|mysqld|mysql|mariadb|redis|sshd)(@.*)?\\.service$') | list }}"
+
+- name: "[Services] Obtener ruta de unidad systemd"
+  command: "systemctl show {{ item }} -p FragmentPath --value"
+  register: service_unit_paths
+  changed_when: false
+  failed_when: false
+  loop: "{{ active_profiled_services }}"
+
+- name: "[Services] Obtener versiones de software activo"
+  shell: |
+    {{ service_profiles[normalized_service_name].version_cmd }} 2>&1 | \
+    awk 'match($0, /[0-9]+\.[0-9]+/){print; found=1; exit} {last=$0} END{if(!found && last!="") print last}'
+  vars:
+    normalized_service_name: "{{ item | regex_replace('@.*\\.service$', '.service') }}"
+  register: service_versions_cmd
+  changed_when: false
+  failed_when: false
+  loop: "{{ active_profiled_services }}"
+
+- name: "[Services] Calcular tamano de datos por servicio activo"
+  shell: |
+    total=0
+    for p in {{ service_profiles[normalized_service_name].data_paths | map('quote') | join(' ') }}; do
+      if [ -e "$p" ]; then
+        size=$(du -sm "$p" 2>/dev/null | awk '{print $1}')
+        size=${size:-0}
+        total=$((total + size))
+      fi
+    done
+    echo "$total"
+  vars:
+    normalized_service_name: "{{ item | regex_replace('@.*\\.service$', '.service') }}"
+  register: service_data_sizes
+  changed_when: false
+  failed_when: false
+  loop: "{{ active_profiled_services }}"
+
+- name: "[Services] Consolidar detalle tecnico de servicios"
+  set_fact:
+    service_technical_details: "{{ service_technical_details + [ {
+      'service': item,
+      'version': (service_versions_cmd.results[idx].stdout | default('N/D') | trim),
+      'unit_file': (service_unit_paths.results[idx].stdout | default('N/D') | trim),
+      'config_paths': service_profiles[normalized_service_name].config_paths,
+      'data_paths': service_profiles[normalized_service_name].data_paths,
+      'data_size_mb': (service_data_sizes.results[idx].stdout | default('0') | int)
+    } ] }}"
+    service_versions_summary: "{{ service_versions_summary | combine({ item: (service_versions_cmd.results[idx].stdout | default('N/D') | trim) }) }}"
+  vars:
+    normalized_service_name: "{{ item | regex_replace('@.*\\.service$', '.service') }}"
+  loop: "{{ active_profiled_services }}"
+  loop_control:
+    index_var: idx
+
+- name: "[Services] Calcular tamano total de datos activos"
+  set_fact:
+    service_data_total_mb: "{{ service_technical_details | map(attribute='data_size_mb') | map('int') | sum | default(0, true) }}"

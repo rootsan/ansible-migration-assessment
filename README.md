@@ -40,13 +40,14 @@ migration-project/
 ## ⚙️ Requisitos Previos
 * Ansible Core 2.12+ instalado en el nodo de control.
 * Acceso SSH a los nodos destino (preferiblemente con llaves SSH).
-* Privilegios de sudo (root) sin contraseña para el usuario de automatización.
-  - Nota: Requerido para leer logs del sistema (/var/log/messages) y ejecutar leapp.
+* Privilegios de sudo (root) para el usuario de automatización.
+  - Nota: Puedes usar `-K` para solicitar contraseña de `become` en tiempo de ejecución.
+  - Requerido para leer logs del sistema (/var/log/messages) y ejecutar leapp.
 * Python 2.7 o 3.6+ en los nodos destino (Ansible lo detecta automáticamente).
 
 ## 🚀 Guía de Uso Rápida
 1. Configurar el Inventario
-Edita el archivo inventory/hosts.yml para reflejar tu infraestructura. Asegúrate de agrupar los servidores correctamente.
+Usa `inventory/hosts.example.yml` como plantilla y define tus hosts reales en `inventory/hosts.yml`. Asegúrate de agrupar los servidores correctamente.
 
 ```bash
 vim inventory/hosts.yml
@@ -57,7 +58,15 @@ Antes de lanzar la evaluación, asegura que Ansible "ve" a todos los servidores.
 ```bash
 ansible -i inventory/hosts.yml all -m ping
 ```
-3. Ejecutar la Evaluación de Riesgo (Risk Assessment)
+
+3. Ejecutar workflow completo (Assessment + CSV) en una sola sentencia
+Este workflow ejecuta primero la evaluación de riesgo en los nodos y luego consolida automáticamente los JSON en el CSV maestro.
+
+```bash
+ansible-playbook -i inventory/hosts.yml playbooks/full_assessment_workflow.yml -K
+```
+
+4. (Opcional) Ejecutar playbooks por separado
 Este playbook ejecutará el rol migration_assessment en todos los nodos. Generará un archivo JSON individual en /tmp de cada servidor.
 
 ```bash
@@ -65,7 +74,7 @@ ansible-playbook -i inventory/hosts.yml playbooks/assess_infrastructure.yml
 ```
 > Nota: Este proceso es de lectura/análisis. No modifica archivos de configuración ni instala paquetes (salvo herramientas de diagnóstico si se configuran). Utiliza leapp en modo --analyze (simulación).
 
-4. Generar el Reporte Consolidado
+5. Generar el Reporte Consolidado
 Una vez finalizada la evaluación, ejecuta este playbook para recolectar los JSONs y crear el CSV maestro en tu máquina local.
 
 ```bash

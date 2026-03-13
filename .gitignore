@@ -1,0 +1,12 @@
+# Ansible runtime artifacts
+ansible_migration.log
+.retries/
+
+# Generated reports
+playbooks/Master_Migration_Risk_Report.csv
+playbooks/reports_json/*.json
+
+# Local editor/runtime files
+*.swp
+*~
+.~lock.*

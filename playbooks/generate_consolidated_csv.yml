@@ -2,21 +2,34 @@
 - name: "Generar Reporte CSV Maestro de Migración"
   hosts: all
   gather_facts: no
+  become: no
   vars:
     local_report_dir: "./reports_json"
     master_csv_file: "./Master_Migration_Risk_Report.csv"
     remote_json_path: "/tmp/migration_assessment_{{ inventory_hostname }}.json"
 
   tasks:
+    - name: "Verificar existencia del JSON remoto"
+      stat:
+        path: "{{ remote_json_path }}"
+      register: remote_json_stat
+
     - name: "Recuperar JSONs al nodo de control"
       fetch:
         src: "{{ remote_json_path }}"
         dest: "{{ local_report_dir }}/"
         flat: yes
+      when: remote_json_stat.stat.exists
+
+    - name: "Avisar cuando el JSON remoto no existe"
+      debug:
+        msg: "No se encontro artefacto de evaluacion en {{ inventory_hostname }}: {{ remote_json_path }}"
+      when: not remote_json_stat.stat.exists
 
 - name: "Procesar JSONs y crear CSV"
   hosts: localhost
   gather_facts: no
+  become: no
   vars:
     local_report_dir: "./reports_json"
     master_csv_file: "./Master_Migration_Risk_Report.csv"
@@ -25,7 +38,8 @@
     - name: "Crear cabecera del CSV"
       copy:
         dest: "{{ master_csv_file }}"
-        content: "Hostname,OS,Version,Risk_Score,Risk_Level,Risk_Factors,Open_Ports\n"
+        content: "Hostname,OS_Distro,OS_Version,Kernel_Version,Python_Version,Package_Manager,Risk_Level,Risk_Score,Recommendation,Recommendation_Rationale,Enabled_Software_Versions,Enabled_Software_Ports,Active_Services_Count,Service_Data_MB,Risk_Factors,Open_Ports\n"
+        force: yes #Recrea el archivo en cada corrida para evitar duplicados
 
     - name: "Listar archivos JSON descargados"
       find:
@@ -42,13 +56,22 @@
           {{ json_content.host }},
           {{ json_content.os_distro }},
           {{ json_content.os_version }},
-          {{ json_content.score }},
+          {{ json_content.kernel_version | default('N/D') }},
+          {{ json_content.python_version | default('N/D') }},
+          {{ json_content.package_manager | default('N/D') }},
           {{ json_content.level }},
+          {{ json_content.score }},
+          "{{ (json_content.migration_recommendation.strategy | default('N/D')) ~ ': ' ~ (json_content.migration_recommendation.decision | default('N/D')) }}",
+          "{{ json_content.migration_recommendation.rationale | default('N/D') }}",
+          "{{ json_content.enabled_software_version_summary | default([]) | join(' ; ') }}",
+          "{{ json_content.enabled_software_ports_summary | default([]) | join(' ; ') }}",
+          {{ json_content.running_services_count | default(0) }},
+          {{ json_content.service_data_total_mb | default(0) }},
           "{{ json_content.risk_factors | join(' | ') }}",
-          "{{ json_content.open_ports | join(' ') }}"
+          "{{ json_content.open_ports_with_protocol | default(json_content.open_ports) | join(' | ') }}"
         insertafter: EOF
-      loop: "{{ json_files.files }}"
+      loop: "{{ json_files.files | sort(attribute='path') }}"
 
     - name: "Notificación Final"
       debug:
-        msg: "Reporte generado en: {{ playbook_dir }}/{{ master_csv_file }}"
+        msg: "Reporte consolidado generado: {{ playbook_dir }}/{{ master_csv_file }}"
